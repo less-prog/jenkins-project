@@ -1,59 +1,55 @@
 pipeline {
-    agent any
-    environment {
-        IMAGE_NAME = 'sanjeevkt720/jenkins-flask-app'
-        IMAGE_TAG = "${IMAGE_NAME}:${env.BUILD_NUMBER}"
-        KUBECONFIG = credentials('kubeconfig-credentials-id')
+    agent any  // Ou utiliser 'agent { label "python" }' selon la config de Jenkins
 
+    environment {
+        VENV_DIR = 'venv'  // Répertoire pour l’environnement virtuel Python
     }
+
     stages {
 
         stage('Checkout') {
             steps {
-                git url: 'https://github.com/kodekloudhub/jenkins-project.git', branch: 'main'
+                git url: 'https://github.com/less-prog/jenkins-project.git', branch: 'main'
                 sh "ls -ltr"
             }
         }
+
         stage('Setup') {
             steps {
-                sh "pip install -r requirements.txt"
+                sh """
+                python3 -m venv $VENV_DIR
+                source $VENV_DIR/bin/activate
+                pip install --upgrade pip
+                pip install -r requirements.txt
+                """
             }
         }
+
         stage('Test') {
             steps {
-                sh "pytest"
-                sh "whoami"
+                script {
+                    catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                        sh """
+                        source $VENV_DIR/bin/activate
+                        pytest --maxfail=5 --disable-warnings
+                        """
+                    }
+                    sh "whoami"
+                }
             }
         }
-        stage('Login to docker hub') {
-            steps {
-                withCredentials([string(credentialsId: 'dockerhubpwd', variable: 'dockerhubpwd')]) {
-                sh 'echo ${dockerhubpwd} | docker login -u sanjeevkt720 --password-stdin'}
-                echo 'Login successfully'
-            }
+    }
+
+    post {
+        always {
+            sh "deactivate || true"  // Désactive l’environnement virtuel si activé
+            sh "rm -rf $VENV_DIR || true"  // Nettoyage
         }
-        stage('Build Docker Image')
-        {
-            steps
-            {
-                sh 'docker build -t ${IMAGE_TAG} .'
-                echo "Docker image build successfully"
-                sh "docker images"
-            }
+        failure {
+            echo "❌ Le pipeline a échoué ! Vérifiez les logs."
         }
-        stage('Push Docker Image')
-        {
-            steps
-            {
-                sh 'docker push ${IMAGE_TAG}'
-                echo "Docker image push successfully"
-            }
-        }
-        stage('Deploy to EKS Cluster') {
-            steps {
-                sh "kubectl apply -f deployment.yaml"
-                echo "Deployed to EKS Cluster"
-            }
+        success {
+            echo "✅ Tests passés avec succès !"
         }
     }
 }
